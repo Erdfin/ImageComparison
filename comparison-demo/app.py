@@ -5,6 +5,7 @@ Run with:  streamlit run app.py
 
 from __future__ import annotations
 
+import time
 from typing import Any
 
 import cv2
@@ -14,7 +15,7 @@ import plotly.express as px
 import streamlit as st
 
 from metrics import all_metrics, get_metric
-from runner import compare_pair, instantiate_metrics, run_sweep
+from runner import compare_pair, default_workers, instantiate_metrics, run_sweep, timing_summary
 from sources import ImagePairSource, ParamSpec, all_sources
 
 st.set_page_config(page_title="Image comparison demo", layout="wide")
@@ -85,6 +86,18 @@ with st.sidebar:
         label_visibility="collapsed",
     )
 
+    st.header("Performance")
+    workers = int(
+        st.number_input(
+            "Worker threads", min_value=1, max_value=32, value=default_workers(),
+            help=(
+                "Metrics run in parallel threads. 1 = sequential, which gives the "
+                "cleanest per-metric wall times; with more threads the wall time of a "
+                "metric also includes waiting, so compare the CPU times instead."
+            ),
+        )
+    )
+
 source = source_cls()
 metrics = instantiate_metrics(metric_keys)
 
@@ -105,7 +118,9 @@ with tab_compare:
     elif not metrics:
         st.info("Select at least one metric in the sidebar.")
     else:
-        results = compare_pair(pair, metrics)
+        started = time.perf_counter()
+        results = compare_pair(pair, metrics, max_workers=workers)
+        total_wall_s = time.perf_counter() - started
         map_keys = [m.key for m in metrics if results[m.key].map is not None]
 
         col_ref, col_test, col_map = st.columns(3)
@@ -137,7 +152,8 @@ with tab_compare:
                     "Unit": m.unit,
                     "Better": m.direction.arrow,
                     "Similarity": results[m.key].similarity,
-                    "Time (ms)": results[m.key].elapsed_ms,
+                    "Wall (ms)": results[m.key].elapsed_ms,
+                    "CPU (ms)": results[m.key].cpu_ms,
                     "Notes": "; ".join(results[m.key].warnings),
                 }
                 for m in metrics
@@ -153,9 +169,23 @@ with tab_compare:
                     min_value=0.0, max_value=1.0, format="%.3f",
                     help="Heuristic 0–1 score for side-by-side display; not calibrated.",
                 ),
-                "Time (ms)": st.column_config.NumberColumn(format="%.1f"),
+                "Wall (ms)": st.column_config.NumberColumn(
+                    format="%.1f", help="Elapsed time; includes waiting when threads compete."
+                ),
+                "CPU (ms)": st.column_config.NumberColumn(
+                    format="%.1f", help="CPU time of the metric's own thread."
+                ),
                 "Better": st.column_config.TextColumn(help="↑ higher raw value = more similar"),
             },
+        )
+        cpu_total_s = sum(r.cpu_ms for r in results.values()) / 1000.0
+        st.caption(
+            f"All {len(metrics)} metrics: {total_wall_s:.2f} s wall-clock on "
+            f"{workers if workers > 1 and len(metrics) > 1 else 1} thread(s), "
+            f"{cpu_total_s:.2f} s total CPU time."
+        )
+        st.download_button(
+            "Download scores (CSV)", table.to_csv(index=False).encode(), "scores.csv", "text/csv"
         )
 
 # -------------------------------------------------------------- sweep tab
@@ -192,7 +222,10 @@ with tab_sweep:
                 values = np.unique(np.round(values).astype(int))
             bar = st.progress(0.0, text="Running sweep…")
             try:
-                df = run_sweep(source, params, sweep_name, values, metrics, progress=bar.progress)
+                df = run_sweep(
+                    source, params, sweep_name, values, metrics,
+                    progress=bar.progress, max_workers=workers,
+                )
                 st.session_state["sweep"] = (source_cls.key, spec.title, df)
             except ValueError as exc:
                 st.session_state.pop("sweep", None)
@@ -220,6 +253,39 @@ with tab_sweep:
                 fig_raw.for_each_annotation(lambda a: a.update(text=a.text.split("=")[-1]))
                 st.plotly_chart(fig_raw, width="stretch")
                 st.caption("Infinite values (e.g. PSNR of identical images) are left out of the panels.")
+
+            with st.expander("Timing per metric"):
+                timing = timing_summary(df)
+                wall_s = df.attrs.get("wall_s", float("nan"))
+                n_workers = df.attrs.get("workers", 1)
+                cpu_s = timing["total_cpu_ms"].sum() / 1000.0
+                st.caption(
+                    f"Sweep of {df['x'].nunique()} steps × {df['metric'].nunique()} metrics: "
+                    f"{wall_s:.1f} s wall-clock on {n_workers} thread(s); "
+                    f"{cpu_s:.1f} s total CPU time in the metrics."
+                )
+                fig_time = px.bar(
+                    timing.sort_values("mean_cpu_ms"), x="mean_cpu_ms", y="metric", orientation="h",
+                    labels={"mean_cpu_ms": "Mean CPU time per evaluation (ms)", "metric": ""},
+                    height=max(300, 22 * len(timing)),
+                )
+                st.plotly_chart(fig_time, width="stretch")
+                st.dataframe(
+                    timing.drop(columns="metric_key"), hide_index=True, width="stretch",
+                    column_config={
+                        c: st.column_config.NumberColumn(format="%.1f")
+                        for c in ("mean_wall_ms", "max_wall_ms", "mean_cpu_ms", "total_cpu_ms")
+                    },
+                )
+                st.caption(
+                    "Wall time is elapsed time per evaluation (inflated by waiting when several "
+                    "threads run); CPU time is that of the metric's own thread. Set worker "
+                    "threads to 1 for clean wall-clock numbers."
+                )
+            st.download_button(
+                "Download sweep data incl. timings (CSV)",
+                df.to_csv(index=False).encode(), "sweep.csv", "text/csv",
+            )
 
             warned = df[df["warnings"] != ""]
             if not warned.empty:

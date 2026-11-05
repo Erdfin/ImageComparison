@@ -59,7 +59,12 @@ class MetricResult:
         map_label: Short description of ``map``.
         details: Extra metric-specific values (e.g. estimated shift).
         warnings: Human-readable notes about degenerate inputs or failures.
-        elapsed_ms: Wall-clock time of the computation.
+        elapsed_ms: Wall-clock time of the computation. When several metrics
+            run in parallel threads this includes time spent waiting for the
+            CPU / the interpreter lock, so it can exceed the stand-alone time.
+        cpu_ms: CPU time used by the calling thread during the computation;
+            far less sensitive to parallel load than ``elapsed_ms``. Work done
+            in other threads (e.g. multithreaded BLAS) is not counted.
     """
 
     value: float
@@ -69,6 +74,7 @@ class MetricResult:
     details: dict[str, Any] = field(default_factory=dict)
     warnings: list[str] = field(default_factory=list)
     elapsed_ms: float = 0.0
+    cpu_ms: float = 0.0
 
 
 _REGISTRY: dict[str, type[ComparisonMetric]] = {}
@@ -129,6 +135,7 @@ class ComparisonMetric(ABC):
             raise ValueError(f"image shapes differ: {ref.shape} vs {tst.shape}")
 
         start = time.perf_counter()
+        cpu_start = time.thread_time()
         try:
             with np.errstate(all="ignore"):
                 result = self._compute(ref, tst)
@@ -137,6 +144,7 @@ class ComparisonMetric(ABC):
                 value=math.nan, warnings=[f"{type(exc).__name__}: {exc}"]
             )
         result.elapsed_ms = (time.perf_counter() - start) * 1000.0
+        result.cpu_ms = (time.thread_time() - cpu_start) * 1000.0
 
         if result.similarity is None and not math.isnan(result.value):
             sim = self._to_similarity(result.value)

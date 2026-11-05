@@ -1,1 +1,303 @@
-Hello, world.
+\begin{abstract}
+This document collects the classical, hand-designed metrics used to compare two images: pixel-wise error measures, structural and perceptually motivated indices, colour-difference formulas, histogram and information-theoretic measures, correlation and shape-based measures, and perceptual hashes. Metrics that rely on learned (machine-learning) models, such as LPIPS or DISTS, are deliberately excluded. For each metric we give the definition, typical range and interpretation, notable properties and failure modes, and a citation (including arXiv preprints where one exists). A summary table closes the document.
+\end{abstract}
+
+\tableofcontents
+
+%--------------------------------------------------------------------
+\section{Scope and notation}
+%--------------------------------------------------------------------
+
+Unless stated otherwise, all metrics below are \emph{full-reference}: they take a reference image $\X$ and a test image $\Y$ of identical size, and return a scalar score or a per-pixel map. Surveys that organise the field include \citet{pedersen2012}, \citet{lin2011survey}, and the comparison of \citet{ding2020comparison} (which also covers learned models; only the classical ones are discussed here). The benchmark of \citet{vallez2022needle} is a useful reference for hash- and keypoint-based methods at scale.
+
+\paragraph{Notation.}
+Images have $N$ pixels in total (summed over channels where relevant). Pixel $i$ has value $x_i$ in $\X$ and $y_i$ in $\Y$. $L$ denotes the dynamic range (e.g.\ $L=255$ for 8-bit images). Means, variances and covariances are written $\mu$, $\sigma^2$, $\sigma_{xy}$; when computed over a local window they are local statistics. $\bar{x}$ and $\bar{y}$ denote global means.
+
+%--------------------------------------------------------------------
+\section{Pixel-wise and signal-fidelity metrics}
+%--------------------------------------------------------------------
+
+These metrics compare pixel values independently, ignoring spatial arrangement. They are cheap, differentiable and easy to interpret, but they correlate only moderately with human judgements \citep{girod1993,wang2009mse}.
+
+\subsection{Mean absolute error (MAE) and sum of absolute differences (SAD)}
+\[
+\mathrm{MAE}(\X,\Y) = \frac1N\sum_{i=1}^{N}|x_i-y_i|, \qquad \mathrm{SAD}=N\cdot\mathrm{MAE}.
+\]
+Range $[0,L]$, lower is better. Less dominated by outliers than the squared error; widely used in block matching.
+
+\subsection{Mean squared error (MSE), sum of squared differences (SSD), RMSE}
+\[
+\mathrm{MSE}(\X,\Y) = \frac1N\sum_{i=1}^{N}(x_i-y_i)^2, \qquad \mathrm{RMSE}=\sqrt{\mathrm{MSE}}.
+\]
+Range $[0,L^2]$ (MSE), lower is better. MSE is the $\ell_2$ distance between the images viewed as vectors; it treats every pixel and every error pattern equally, so e.g.\ a small global brightness shift and an equally large but visually obvious noise pattern can receive the same score \citep{wang2009mse}.
+
+\subsection{Peak signal-to-noise ratio (PSNR)}
+\[
+\mathrm{PSNR}(\X,\Y) = 10\log_{10}\frac{L^2}{\mathrm{MSE}(\X,\Y)}\ \text{dB}.
+\]
+Higher is better; identical images give $+\infty$. PSNR is a monotone transform of MSE, so it has the same weaknesses; its validity as a quality predictor is essentially limited to comparing distortions of the \emph{same type} on the \emph{same content} \citep{huynh2008}. Its relation to SSIM is analysed by \citet{hore2010}.
+
+\subsection{Normalised and zero-normalised cross-correlation (NCC, ZNCC)}
+\[
+\mathrm{NCC}=\frac{\sum_i x_i y_i}{\sqrt{\sum_i x_i^2}\sqrt{\sum_i y_i^2}},\qquad
+\mathrm{ZNCC}=\frac{\sum_i (x_i-\bar x)(y_i-\bar y)}{\sqrt{\sum_i (x_i-\bar x)^2}\sqrt{\sum_i (y_i-\bar y)^2}}.
+\]
+ZNCC is the Pearson correlation coefficient of the two pixel vectors, with range $[-1,1]$, and is invariant to affine intensity changes $y\mapsto ay+b$ ($a>0$). It is the standard similarity for template matching; efficient evaluation over all shifts is described by \citet{lewis1995}.
+
+%--------------------------------------------------------------------
+\section{Structural and perceptually motivated metrics}
+%--------------------------------------------------------------------
+
+These hand-crafted indices model aspects of the human visual system (HVS) or of natural-image statistics. They are typically computed on local windows and pooled into a score.
+
+\subsection{Universal image quality index (UQI)}
+Introduced by \citet{wang2002uqi}, computed in sliding windows:
+\[
+Q = \frac{4\,\sigma_{xy}\,\mu_x\mu_y}{(\sigma_x^2+\sigma_y^2)(\mu_x^2+\mu_y^2)}
+ = \underbrace{\frac{\sigma_{xy}}{\sigma_x\sigma_y}}_{\text{correlation}}\cdot
+   \underbrace{\frac{2\mu_x\mu_y}{\mu_x^2+\mu_y^2}}_{\text{luminance}}\cdot
+   \underbrace{\frac{2\sigma_x\sigma_y}{\sigma_x^2+\sigma_y^2}}_{\text{contrast}}.
+\]
+Range $[-1,1]$, higher is better. Unstable when the denominators approach zero, which motivated SSIM.
+
+\subsection{Structural similarity index (SSIM)}
+\citet{wang2004ssim} compare luminance, contrast and structure in each local window:
+\[
+\mathrm{SSIM}(x,y)=\frac{(2\mu_x\mu_y+C_1)(2\sigma_{xy}+C_2)}{(\mu_x^2+\mu_y^2+C_1)(\sigma_x^2+\sigma_y^2+C_2)},
+\]
+with $C_1=(K_1L)^2$, $C_2=(K_2L)^2$, and the reference settings $K_1=0.01$, $K_2=0.03$, an $11\times11$ circular-symmetric Gaussian window with $\sigma=1.5$. The image score (MSSIM) is the mean of the local SSIM map. Range is nominally $[-1,1]$ and in practice mostly $[0,1]$; higher is better. The SSIM map is itself useful for localising differences. Results depend on the window (Gaussian vs.\ uniform), whether colour is converted to grey, and the choice of $L$, so implementations differ slightly. \citet{nilsson2020understanding} give a detailed analysis of SSIM's behaviour and properties.
+
+\subsection{Multi-scale SSIM (MS-SSIM)}
+\citet{wang2003msssim} apply SSIM over $M=5$ dyadic scales (low-pass filtering and $2\times$ downsampling between scales). Contrast and structure terms are evaluated at every scale and the luminance term only at the coarsest:
+\[
+\text{MS-SSIM}=[l_M]^{\alpha_M}\prod_{j=1}^{M}[c_j]^{\beta_j}[s_j]^{\gamma_j},
+\]
+with the published exponents $\beta_j=\gamma_j=(0.0448,\,0.2856,\,0.3001,\,0.2363,\,0.1333)$ for $j=1,\dots,5$ and $\alpha_M=\gamma_M$. It accounts for viewing-distance dependence and generally correlates better with subjective scores than single-scale SSIM.
+
+\subsection{Complex-wavelet SSIM (CW-SSIM)}
+\citet{sampat2009cwssim} compute a structural similarity on complex steerable-pyramid coefficients $c_x, c_y$,
+\[
+\text{CW-SSIM}=\frac{2\left|\sum_i c_{x,i}\,c_{y,i}^{*}\right|+K}{\sum_i |c_{x,i}|^2+\sum_i|c_{y,i}|^2+K},
+\]
+which is insensitive to small translations, rotations and scalings (these appear as consistent phase shifts), making it suitable when images are not perfectly registered.
+
+\subsection{Information-content-weighted SSIM (IW-SSIM)}
+\citet{wang2011iwssim} pool multi-scale SSIM-type scores with weights given by a local information-content measure derived from a Gaussian-scale-mixture model, so that informative regions contribute more than flat ones.
+
+\subsection{Gradient magnitude similarity deviation (GMSD)}
+\citet{xue2014gmsd} (arXiv:1308.3052) observe that local image quality is well captured by gradient magnitudes. After averaging over $2\times2$ blocks and downsampling by 2, gradient magnitude maps $m_r, m_d$ of the reference and distorted image are obtained with Prewitt filters, and a similarity map is formed:
+\[
+\mathrm{GMS}(i)=\frac{2\,m_r(i)\,m_d(i)+c}{m_r(i)^2+m_d(i)^2+c},\qquad
+\mathrm{GMSD}=\sqrt{\frac1N\sum_i\big(\mathrm{GMS}(i)-\overline{\mathrm{GMS}}\big)^2},
+\]
+with $c=170$ for 8-bit images. The score is the \emph{standard deviation} of the GMS map (not the mean): uniformly-distributed distortions give a low deviation even when severe, which is the paper's central idea. Lower is better ($0$ for identical images). Very fast and competitive in accuracy.
+
+\subsection{Feature similarity index (\texorpdfstring{FSIM / FSIM$_c$}{FSIM and FSIMc})}
+\citet{zhang2011fsim} combine phase congruency ($PC$, a contrast-invariant low-level feature) and gradient magnitude ($G$):
+\begin{align*}
+S_{PC}&=\frac{2PC_1PC_2+T_1}{PC_1^2+PC_2^2+T_1}, &
+S_G&=\frac{2G_1G_2+T_2}{G_1^2+G_2^2+T_2},\\
+S_L&=S_{PC}^{\alpha}\,S_G^{\beta}, &
+\mathrm{FSIM}&=\frac{\sum_i S_L(i)\,PC_m(i)}{\sum_i PC_m(i)},
+\end{align*}
+with $PC_m=\max(PC_1,PC_2)$ used as a pooling weight and $T_1,T_2$ small stabilising constants. FSIM$_c$ adds a chrominance similarity computed in the YIQ space. Range $(0,1]$, higher is better.
+
+\subsection{Visual saliency-induced index (VSI)}
+\citet{zhang2014vsi} replace the phase-congruency weighting with a visual-saliency map: the score combines saliency, gradient and chrominance similarity maps, and pools them with $\max$ of the two saliency maps as weight. Range $(0,1]$, higher is better. A related, cheaper design using spectral-residual saliency is SR-SIM \citep{zhang2012srsim}.
+
+\subsection{Haar wavelet-based perceptual similarity index (HaarPSI)}
+\citet{reisenhofer2018haarpsi} (arXiv:1607.06140) measure local similarity from the responses of a single-level Haar wavelet transform at two scales (in the horizontal and vertical directions), add the I and Q chroma channels, weight locations by the coarser-scale response magnitude, and map the pooled score through a logistic function. Range $[0,1]$, higher is better. It is notable for being very cheap while performing strongly on standard IQA databases.
+
+\subsection{Information fidelity criterion (IFC) and visual information fidelity (VIF)}
+These treat quality as the information shared between reference and test. With natural-scene statistics (a Gaussian-scale-mixture model in a wavelet domain), IFC \citep{sheikh2005ifc} measures the mutual information between the reference source and the distorted image. VIF \citep{sheikh2006vif} adds an HVS noise model and takes the ratio of information extractable from the test image to that extractable from the reference:
+\[
+\mathrm{VIF}=\frac{\sum_{j\in\text{subbands}} I\big(\vec C^{\,j};\vec F^{\,j}\mid s^{j}\big)}
+                  {\sum_{j\in\text{subbands}} I\big(\vec C^{\,j};\vec E^{\,j}\mid s^{j}\big)},
+\]
+where $\vec C$ is the source, $\vec E$ the HVS-processed reference, and $\vec F$ the HVS-processed test image. VIF $\approx 1$ for identical images and can exceed 1 when the test image is a contrast-enhanced version of the reference; a pixel-domain variant (VIFp) is cheaper.
+
+\subsection{Noise quality measure (NQM) and PSNR-HVS-M}
+NQM \citep{damera2000nqm} models the distortion as additive noise filtered by a degradation model that includes contrast sensitivity, local luminance mean and contrast interaction, and reports an SNR in the resulting space. PSNR-HVS-M \citep{ponomarenko2007psnrhvsm} computes PSNR on $8\times8$ DCT blocks after weighting by the contrast sensitivity function and subtracting masked error energy.
+
+\subsection{Most apparent distortion (MAD)}
+\citet{larson2010mad} combine two strategies: a detection-based measure for near-threshold distortions (accounting for luminance and contrast masking) and an appearance-based measure comparing log-Gabor sub-band statistics for clearly visible distortions, weighted according to the estimated distortion level. Lower is better ($0$ for identical).
+
+\subsection{FLIP}
+FLIP \citep{andersson2020flip} is a full-reference metric that mimics what a human sees when flipping between two images, designed for rendering. It filters both images with contrast-sensitivity functions in an opponent colour space, computes a colour difference (using the HyAB distance in a perceptually uniform space) and a feature (edge/point) difference, and combines them into a per-pixel error map in $[0,1]$; the mean of the map is the score (lower is better). Its inputs depend on the viewing distance expressed as pixels per degree.
+
+\subsection{HDR-VDP-2}
+For high-dynamic-range content, \citet{mantiuk2011hdrvdp} model optical and retinal effects, multi-scale neural contrast, and masking in absolute luminance units, producing a probability-of-detection map and a scalar quality score $Q\in[0,100]$ (higher is better). The inputs must be calibrated to absolute luminance (cd/m$^2$) for the output to be meaningful.
+
+%--------------------------------------------------------------------
+\section{Colour-difference metrics}
+%--------------------------------------------------------------------
+
+When the comparison is about colour accuracy, per-pixel colour differences are computed in a perceptually-motivated space such as CIELAB (from sRGB $\to$ XYZ with a D65 white point $\to$ $L^*a^*b^*$) and averaged (or percentile-pooled) over the image.
+
+\paragraph{CIE76 ($\Delta E^*_{ab}$).} The Euclidean distance in CIELAB,
+\[
+\Delta E^*_{ab}=\sqrt{(\Delta L^*)^2+(\Delta a^*)^2+(\Delta b^*)^2}.
+\]
+Simple, but CIELAB is not perceptually uniform, especially for saturated colours.
+
+\paragraph{CIEDE2000 ($\Delta E_{00}$).} The CIE-recommended formula \citep{cie142}, with lightness, chroma and hue weighting functions and a rotation term for the blue region:
+\[
+\Delta E_{00}=\sqrt{\Big(\tfrac{\Delta L'}{k_LS_L}\Big)^2+\Big(\tfrac{\Delta C'}{k_CS_C}\Big)^2+\Big(\tfrac{\Delta H'}{k_HS_H}\Big)^2+R_T\,\tfrac{\Delta C'}{k_CS_C}\tfrac{\Delta H'}{k_HS_H}}.
+\]
+Because the definition contains several discontinuities and easy-to-miss details, the implementation notes and test data of \citet{sharma2005} should be used to validate any implementation. Values around $1$ are commonly regarded as close to the threshold of noticeability, although this depends on viewing conditions.
+
+%--------------------------------------------------------------------
+\section{Histogram and distribution-based metrics}
+%--------------------------------------------------------------------
+
+These compare the \emph{distribution} of intensities or colours, discarding where each value occurs. They are invariant to spatial rearrangement (translation, rotation, shuffling), which is a strength for retrieval and a weakness for fidelity measurement. Let $p,q$ be normalised histograms (per channel, or joint over colour channels) with $K$ bins.
+
+\begin{itemize}
+  \item \textbf{Histogram correlation:} the Pearson correlation of $p$ and $q$; range $[-1,1]$, higher is better.
+  \item \textbf{Histogram intersection} \citep{swain1991}: $\sum_k\min(p_k,q_k)\in[0,1]$, higher is better.
+  \item \textbf{Chi-square distance:} $\chi^2(p,q)=\tfrac12\sum_k \frac{(p_k-q_k)^2}{p_k+q_k}$; lower is better.
+  \item \textbf{Bhattacharyya coefficient and distance} \citep{bhattacharyya1943}: $\mathrm{BC}=\sum_k\sqrt{p_kq_k}$, with $D_B=-\ln\mathrm{BC}$ or the Hellinger-type form $\sqrt{1-\mathrm{BC}}\in[0,1]$; lower distance is better.
+  \item \textbf{Kullback--Leibler divergence} \citep{kullback1951}: $D_{KL}(p\|q)=\sum_k p_k\ln\frac{p_k}{q_k}$; asymmetric and infinite if $q_k=0<p_k$, so smoothing is needed.
+  \item \textbf{Jensen--Shannon divergence} \citep{lin1991js}: $\tfrac12D_{KL}(p\|m)+\tfrac12D_{KL}(q\|m)$ with $m=\tfrac12(p+q)$; symmetric, bounded by $\ln 2$.
+  \item \textbf{Earth mover's distance (EMD, Wasserstein-1)} \citep{rubner2000}: the minimal cost of transforming one histogram into the other given a ground distance between bins. For one-dimensional intensity histograms with unit bin spacing it reduces to $\sum_k|P_k-Q_k|$, where $P,Q$ are the cumulative distributions. Unlike bin-wise measures it accounts for how \emph{far} mass has to move, so a one-level brightness shift is cheaper than a large one.
+\end{itemize}
+
+%--------------------------------------------------------------------
+\section{Information-theoretic metrics}
+%--------------------------------------------------------------------
+
+Using the joint histogram of co-located pixel values $(x_i,y_i)$, with marginals $p_X$, $p_Y$ and joint $p_{XY}$:
+\[
+I(\X;\Y)=\sum_{x,y}p_{XY}(x,y)\log\frac{p_{XY}(x,y)}{p_X(x)\,p_Y(y)}=H(\X)+H(\Y)-H(\X,\Y).
+\]
+Mutual information (MI) is large when one image predicts the other, \emph{without assuming a specific functional relationship}, which makes it the standard similarity for multi-modal registration \citep{viola1997,maes1997}. MI grows with image overlap and entropy, so the normalised form
+\[
+\mathrm{NMI}=\frac{H(\X)+H(\Y)}{H(\X,\Y)}\in[1,2]
+\]
+of \citet{studholme1999} is often preferred. Results depend on the number of bins and on the interpolation used when the images are geometrically transformed.
+
+%--------------------------------------------------------------------
+\section{Frequency-domain and phase-based metrics}
+%--------------------------------------------------------------------
+
+\paragraph{Phase correlation.} With $F_1,F_2$ the Fourier transforms of the two images, the normalised cross-power spectrum yields
+\[
+r=\mathcal F^{-1}\!\left\{\frac{F_1\,F_2^{*}}{|F_1\,F_2^{*}|}\right\}.
+\]
+For two images related by a pure translation, $r$ is a delta function at that shift \citep{kuglin1975}. The peak position estimates the shift and the peak height ($\le 1$) is a similarity score that is robust to illumination changes and narrow-band noise.
+
+\paragraph{Spectral distances.} One can also compare magnitude spectra (e.g.\ log-spectral distance or the $\ell_2$ distance between radially averaged power spectra) to detect differences in blur, sharpness or texture, independent of exact spatial alignment. These are ad hoc rather than standardised and are best used as diagnostics.
+
+%--------------------------------------------------------------------
+\section{Shape and set-based metrics}
+%--------------------------------------------------------------------
+
+For binary images, segmentation masks and edge maps $A,B$:
+
+\begin{itemize}
+  \item \textbf{Jaccard index / IoU} \citep{jaccard1912}: $J=\frac{|A\cap B|}{|A\cup B|}\in[0,1]$.
+  \item \textbf{Dice coefficient} \citep{dice1945}: $D=\frac{2|A\cap B|}{|A|+|B|}=\frac{2J}{1+J}$.
+  \item \textbf{Hausdorff distance} \citep{huttenlocher1993}: $H(A,B)=\max\{h(A,B),h(B,A)\}$, where $h(A,B)$ is the largest distance from a point of $A$ to its nearest point in $B$. Very sensitive to outliers; the ranked/partial variant is more robust.
+  \item \textbf{Chamfer distance} \citep{barrow1977}: the mean $\frac1{|A|}\sum_{a\in A}\min_{b\in B}\|a-b\|$ (symmetrised in practice), evaluated efficiently with a distance transform \citep{borgefors1986}. Typically applied to edge maps.
+\end{itemize}
+
+Overlap measures (Jaccard, Dice) are zero for masks that are close but not touching, whereas distance-based measures (Hausdorff, Chamfer) degrade gracefully.
+
+%--------------------------------------------------------------------
+\section{Perceptual hashes and keypoint matching}
+%--------------------------------------------------------------------
+
+\subsection{Perceptual hashes}
+A perceptual hash maps an image to a short bit string such that visually similar images give similar strings; the distance is the Hamming distance, and the comparison is $O(1)$ per pair. Common variants (see \citet{zauner2010} for an implementation and benchmark of perceptual hashes) are:
+
+\begin{description}
+  \item[aHash (average hash)] downscale to $8\times8$ grey, threshold each pixel at the mean (64 bits);
+  \item[dHash (difference hash)] downscale to $9\times8$ grey, set each bit by comparing horizontally adjacent pixels (64 bits);
+  \item[pHash (DCT hash)] downscale to $32\times32$ grey, take the DCT, keep the low-frequency $8\times8$ block and threshold at its median;
+  \item[wHash (wavelet hash)] as pHash but using a Haar wavelet transform.
+\end{description}
+
+aHash and dHash are community methods without a canonical publication; the pHash family is documented in \citet{zauner2010}. Hashes are robust to rescaling and mild compression but are not designed to quantify \emph{how much} two images differ. In the large-scale comparison of \citet{vallez2022needle}, dHash was among the best-performing and most efficient methods for finding globally similar images.
+
+\subsection{Local-feature (keypoint) matching}
+Hand-crafted keypoint descriptors such as SIFT \citep{lowe2004} and ORB \citep{rublee2011} can be matched between two images (typically with Lowe's ratio test followed by a geometric consistency check such as RANSAC), and the number or fraction of inliers serves as a similarity score. This is robust to viewpoint change, cropping and partial overlap, but is not a fidelity measure and, in the benchmark of \citet{vallez2022needle}, trailed the hash-based methods for global similarity.
+
+%--------------------------------------------------------------------
+\section{Choosing and evaluating metrics}
+%--------------------------------------------------------------------
+
+\paragraph{Which metric for which question?}
+\begin{itemize}
+  \item \emph{Bit-exactness, codec regression tests, optimisation losses:} MAE, MSE, PSNR.
+  \item \emph{Perceived quality of aligned images:} MS-SSIM, FSIM/VSI, GMSD, HaarPSI, VIF; FLIP for renderings; HDR-VDP-2 for HDR.
+  \item \emph{Colour accuracy:} CIEDE2000.
+  \item \emph{Slight misregistration:} CW-SSIM, phase correlation, EMD.
+  \item \emph{Different modalities:} mutual information.
+  \item \emph{Masks and contours:} Dice, Jaccard, Hausdorff, Chamfer.
+  \item \emph{Near-duplicate detection at scale:} perceptual hashes.
+\end{itemize}
+
+\paragraph{How metrics are validated.}
+Full-reference IQA metrics are usually evaluated against subjective mean opinion scores using Spearman (SROCC) and Kendall (KROCC) rank correlation for monotonicity and Pearson correlation (PLCC) after a nonlinear regression for accuracy, on databases such as LIVE \citep{sheikh2006statistical} and TID2013 \citep{ponomarenko2015tid2013}.
+
+\paragraph{Practical pitfalls.}
+\begin{itemize}
+  \item Specify the colour space and transfer function (sRGB-encoded vs.\ linear), whether the metric runs on luma only or per channel, and the bit depth/dynamic range $L$.
+  \item Images must be aligned and equally sized; resampling method and border handling change the score (particularly for window-based metrics).
+  \item Reported values depend on implementation details (window shape, constants, pooling). Record the library and version, and prefer reference implementations when numbers will be compared with the literature.
+  \item PSNR/SSIM-type scores are only comparable between images of the same content, and a single number can hide where the difference is; inspect the error or SSIM map.
+\end{itemize}
+
+%--------------------------------------------------------------------
+\section{Summary table}
+%--------------------------------------------------------------------
+
+\begingroup
+\small
+\renewcommand{\arraystretch}{1.15}
+\begin{longtable}{@{}p{3.7cm}p{2.3cm}p{3.2cm}p{1.5cm}p{2.3cm}@{}}
+\toprule
+\textbf{Metric} & \textbf{Family} & \textbf{Range} & \textbf{Better} & \textbf{Reference}\\
+\midrule
+\endfirsthead
+\toprule
+\textbf{Metric} & \textbf{Family} & \textbf{Range} & \textbf{Better} & \textbf{Reference}\\
+\midrule
+\endhead
+\bottomrule
+\endfoot
+MAE / SAD           & Pixel-wise    & $[0,L]$              & lower  & --- \\
+MSE / SSD / RMSE    & Pixel-wise    & $[0,L^2]$ / $[0,L]$  & lower  & \citep{wang2009mse}\\
+PSNR                & Pixel-wise    & dB, $\le\infty$      & higher & \citep{huynh2008}\\
+NCC / ZNCC          & Correlation   & $[-1,1]$             & higher & \citep{lewis1995}\\
+UQI                 & Structural    & $[-1,1]$             & higher & \citep{wang2002uqi}\\
+SSIM                & Structural    & $[-1,1]$             & higher & \citep{wang2004ssim}\\
+MS-SSIM             & Structural    & $[0,1]$ (typ.)       & higher & \citep{wang2003msssim}\\
+CW-SSIM             & Structural    & $[0,1]$              & higher & \citep{sampat2009cwssim}\\
+IW-SSIM             & Structural    & $[0,1]$ (typ.)       & higher & \citep{wang2011iwssim}\\
+GMSD                & Gradient      & $\ge0$               & lower  & \citep{xue2014gmsd}\\
+FSIM / FSIM$_c$     & Feature       & $(0,1]$              & higher & \citep{zhang2011fsim}\\
+VSI                 & Saliency      & $(0,1]$              & higher & \citep{zhang2014vsi}\\
+SR-SIM              & Saliency      & $(0,1]$              & higher & \citep{zhang2012srsim}\\
+HaarPSI             & Wavelet       & $[0,1]$              & higher & \citep{reisenhofer2018haarpsi}\\
+IFC                 & Information   & $\ge0$               & higher & \citep{sheikh2005ifc}\\
+VIF                 & Information   & $\ge0$, $\approx1$ ident. & higher & \citep{sheikh2006vif}\\
+NQM                 & HVS model     & dB                   & higher & \citep{damera2000nqm}\\
+PSNR-HVS-M          & HVS model     & dB                   & higher & \citep{ponomarenko2007psnrhvsm}\\
+MAD                 & HVS model     & $\ge0$               & lower  & \citep{larson2010mad}\\
+FLIP                & HVS model     & $[0,1]$              & lower  & \citep{andersson2020flip}\\
+HDR-VDP-2 ($Q$)     & HVS model     & $[0,100]$            & higher & \citep{mantiuk2011hdrvdp}\\
+$\Delta E^*_{ab}$, $\Delta E_{00}$ & Colour & $\ge0$           & lower  & \citep{cie142,sharma2005}\\
+Histogram intersection & Histogram  & $[0,1]$              & higher & \citep{swain1991}\\
+Bhattacharyya       & Histogram     & $[0,1]$ (Hellinger)  & lower  & \citep{bhattacharyya1943}\\
+KL / JS divergence  & Histogram     & $\ge0$ / $[0,\ln2]$  & lower  & \citep{kullback1951,lin1991js}\\
+EMD (Wasserstein-1) & Histogram     & $\ge0$               & lower  & \citep{rubner2000}\\
+MI                  & Information   & $\ge0$               & higher & \citep{viola1997,maes1997}\\
+NMI                 & Information   & $[1,2]$              & higher & \citep{studholme1999}\\
+Phase correlation   & Frequency     & peak $\in[0,1]$      & higher & \citep{kuglin1975}\\
+Jaccard / Dice      & Set overlap   & $[0,1]$              & higher & \citep{jaccard1912,dice1945}\\
+Hausdorff / Chamfer & Shape         & $\ge0$               & lower  & \citep{huttenlocher1993,barrow1977}\\
+Image hashes        & Hamming dist. & $\{0,\dots,64\}$     & lower  & \citep{zauner2010}\\
+SIFT / ORB inliers  & Keypoints     & count or fraction    & higher & \citep{lowe2004,rublee2011}\\
+\end{longtable}
+\endgroup

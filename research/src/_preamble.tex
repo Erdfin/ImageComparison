@@ -1,3 +1,28 @@
-\documentclass{article}
-\title{My Title}
+\documentclass[11pt,a4paper]{article}
+
+\usepackage[margin=2.5cm]{geometry}
+\usepackage{amsmath,amssymb}
+\usepackage{booktabs,array,tabularx,longtable}
+\usepackage[dvipsnames]{xcolor}
+\usepackage{enumitem}
+\usepackage{microtype}
+\usepackage[numbers,sort&compress]{natbib}
+\usepackage[colorlinks=true,linkcolor=blue!50!black,citecolor=blue!50!black,urlcolor=blue!50!black]{hyperref}
+
+\setlist{itemsep=2pt,topsep=4pt}
+
+% Notation shortcuts
+\newcommand{\X}{\mathbf{X}}
+\newcommand{\Y}{\mathbf{Y}}
+\newcommand{\E}{\mathbb{E}}
+\newcommand{\Var}{\operatorname{Var}}
+\newcommand{\Cov}{\operatorname{Cov}}
+\newcommand{\metric}[1]{\textsc{#1}}
+\DeclareMathOperator*{\argmin}{arg\,min}
+
+\title{A Compendium of Classical (Non-Learned) Image Comparison Metrics}
+\author{}
+\date{\today}
+
 \begin{document}
+\maketitle

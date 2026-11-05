@@ -12,6 +12,7 @@ dependencies = [
     "imagehash>=4.3",
     "streamlit>=1.50",
     "plotly>=5.24",
+    "flip-evaluator>=1.5",
 ]
 
 [project.optional-dependencies]

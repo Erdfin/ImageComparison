@@ -5,9 +5,10 @@ from __future__ import annotations
 import math
 
 import numpy as np
-from scipy.ndimage import correlate, gaussian_filter
+from scipy.ndimage import correlate, gaussian_filter, uniform_filter
 from skimage.metrics import structural_similarity
 
+from ._filterbank import filter_responses
 from .base import ComparisonMetric, Direction, Image, MetricResult, to_gray
 
 _K1, _K2 = 0.01, 0.03
@@ -157,3 +158,108 @@ class GradientMagnitudeSimilarityDeviation(ComparisonMetric):
     def _to_similarity(self, value: float) -> float:
         # Deviations above ~0.35 are already very poor on standard databases.
         return 1.0 - value / 0.35
+
+
+# ------------------------------------------------------------------ UQI
+
+
+class UniversalQualityIndex(ComparisonMetric):
+    key = "uqi"
+    name = "UQI"
+    family = "Structural"
+    direction = Direction.HIGHER_IS_BETTER
+    value_range = (-1.0, 1.0)
+    citation = "wang2002uqi"
+    description = (
+        "Correlation × luminance × contrast similarity in 8×8 sliding windows "
+        "on luma (SSIM without stabilising constants)."
+    )
+
+    _WIN = 8
+
+    def _compute(self, ref: Image, test: Image) -> MetricResult:
+        x = to_gray(ref).astype(np.float64)
+        y = to_gray(test).astype(np.float64)
+        if min(x.shape) < self._WIN:
+            raise ValueError(f"image too small: needs at least {self._WIN}px per side")
+
+        def mean(a: np.ndarray) -> np.ndarray:
+            return uniform_filter(a, self._WIN, mode="reflect")
+
+        mx, my = mean(x), mean(y)
+        vx = np.maximum(mean(x * x) - mx * mx, 0.0)
+        vy = np.maximum(mean(y * y) - my * my, 0.0)
+        cxy = mean(x * y) - mx * my
+
+        d_var = vx + vy
+        d_mean = mx * mx + my * my
+        var_ok, mean_ok = d_var > 1e-10, d_mean > 1e-10
+        q = np.ones_like(x)
+        both = var_ok & mean_ok
+        q[both] = 4 * cxy[both] * mx[both] * my[both] / (d_var[both] * d_mean[both])
+        only_mean = ~var_ok & mean_ok
+        q[only_mean] = 2 * mx[only_mean] * my[only_mean] / d_mean[only_mean]
+
+        r = self._WIN // 2
+        return MetricResult(
+            value=float(q[r:-r, r:-r].mean()),
+            map=np.clip(1.0 - q, 0.0, 1.0).astype(np.float32),
+            map_label="1 − local UQI",
+        )
+
+    def _to_similarity(self, value: float) -> float:
+        return value
+
+
+# -------------------------------------------------------------- CW-SSIM
+
+
+class ComplexWaveletSSIM(ComparisonMetric):
+    key = "cw_ssim"
+    name = "CW-SSIM"
+    family = "Structural"
+    direction = Direction.HIGHER_IS_BETTER
+    value_range = (0.0, 1.0)
+    citation = "sampat2009cwssim"
+    requires_alignment = False
+    description = (
+        "SSIM-like index on complex band-pass coefficients (4 scales × 4 "
+        "orientations of a log-Gabor bank, 7×7 windows): tolerant to small "
+        "shifts. Uses a log-Gabor bank rather than the steerable pyramid of "
+        "the original paper, so values differ from reference implementations."
+    )
+
+    _WIN = 7
+    _K = 0.01
+
+    def _compute(self, ref: Image, test: Image) -> MetricResult:
+        x = to_gray(ref).astype(np.float64) * 255.0
+        y = to_gray(test).astype(np.float64) * 255.0
+        if min(x.shape) < 16:
+            raise ValueError("image too small for CW-SSIM (needs at least 16px per side)")
+        cx, cy = filter_responses(x), filter_responses(y)
+
+        n = self._WIN**2
+
+        def wsum(a: np.ndarray) -> np.ndarray:
+            return uniform_filter(a, size=(1, 1, self._WIN, self._WIN), mode="reflect") * n
+
+        ax, ay = np.abs(cx), np.abs(cy)
+        cross = cx * np.conj(cy)
+        s_mag = wsum(ax * ay)
+        s_cross = np.abs(wsum(cross.real) + 1j * wsum(cross.imag))
+        k = self._K
+        mag_term = (2 * s_mag + k) / (wsum(ax**2) + wsum(ay**2) + k)
+        phase_term = (2 * s_cross + k) / (2 * s_mag + k)
+        q = (mag_term * phase_term).reshape(-1, *x.shape)  # bands × H × W
+
+        margin = 8 if min(x.shape) > 48 else 0
+        inner = q[:, margin : x.shape[0] - margin, margin : x.shape[1] - margin]
+        return MetricResult(
+            value=float(inner.mean()),
+            map=np.clip(1.0 - q.mean(axis=0), 0.0, 1.0).astype(np.float32),
+            map_label="1 − mean local CW-SSIM over bands",
+        )
+
+    def _to_similarity(self, value: float) -> float:
+        return value

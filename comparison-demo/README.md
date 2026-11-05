@@ -23,12 +23,16 @@ metrics/
   base.py              ComparisonMetric (ABC), MetricResult, Direction, helpers
   registry.py          all_metrics(), get_metric()
   pixelwise.py         MAE, MSE, RMSE, PSNR, ZNCC
-  structural.py        SSIM, MS-SSIM, GMSD
+  structural.py        SSIM, MS-SSIM, GMSD, UQI, CW-SSIM
+  perceptual.py        FSIM, FSIMc, HaarPSI, VIFp
+  flip.py              FLIP (NVIDIA flip-evaluator; skipped if not installed)
   color.py             ΔE76, ΔE00
   histogram.py         intersection, Bhattacharyya, chi-square, EMD, JS, KL
   information.py       MI, NMI
   frequency.py         phase correlation
   hashing.py           aHash, dHash, pHash, wHash
+  shape.py             Jaccard, Dice, Hausdorff, Chamfer on Canny edge maps
+  _filterbank.py       log-Gabor bank + phase congruency (used by FSIM, CW-SSIM)
 sources/
   base.py              ImagePairSource (ABC), ParamSpec, ImagePair  <- the interface
   disk.py              two images from files / uploads
@@ -70,5 +74,11 @@ vary any numeric parameter it declares.
 * Degenerate inputs (flat images, identical images, images too small) produce
   warnings in the Notes column instead of errors, because those are exactly
   the cases the random generator is meant to explore.
-* Phase 2 (not yet implemented): UQI, FSIM, HaarPSI, VIFp, CW-SSIM, FLIP and
-  shape metrics on edge maps.
+* FSIM, HaarPSI, VIFp, UQI and CW-SSIM are numpy re-implementations written
+  from the papers; they should agree closely with the authors' code but are not
+  bit-exact. CW-SSIM uses a log-Gabor filter bank instead of the steerable
+  pyramid of the original paper. FLIP wraps NVIDIA's official `flip-evaluator`.
+* Several of these metrics are deliberately shown to be blind in some cases
+  (e.g. FSIM, HaarPSI and CW-SSIM barely react to contrast inversion; histogram
+  metrics ignore pixel positions). Use the "invert", "pixel_shuffle" and
+  "translate" distortions in the Sweep tab to see it.
